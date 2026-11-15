@@ -1,3 +1,4 @@
+import { archiveMapCache } from "@/lib/firewatch/archive-map-cache";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, waitFor, screen, fireEvent } from "@testing-library/react";
 import { ArchiveMap } from "./ArchiveMap";
@@ -81,6 +82,7 @@ function mapCalls() {
 }
 
 beforeEach(() => {
+  archiveMapCache.length = 0;
   mocks.zoom = 5;
   mocks.pan = 0;
   mocks.clearLayers.mockClear();
@@ -104,6 +106,26 @@ afterEach(() => {
 });
 
 describe("archive map background loading", () => {
+  it("reuses successful viewports after leaving and returning to the map", async () => {
+    const first = render(<ArchiveMap {...props} />);
+    await waitFor(() => expect(screen.queryByTestId("map-loading")).toBeNull());
+    expect(mapCalls()).toHaveLength(1);
+    first.unmount();
+    render(<ArchiveMap {...props} />);
+    await waitFor(() => expect(screen.queryByTestId("map-loading")).toBeNull());
+    expect(mapCalls()).toHaveLength(1);
+  });
+  it("refreshes expired cached viewports", async () => {
+    const first = render(<ArchiveMap {...props} />);
+    await waitFor(() => expect(screen.queryByTestId("map-loading")).toBeNull());
+    first.unmount();
+    archiveMapCache.forEach((entry) => {
+      entry.expiresAt = 0;
+    });
+    render(<ArchiveMap {...props} />);
+    await waitFor(() => expect(mapCalls()).toHaveLength(2));
+  });
+
   it("keeps Values expanded through cached pans and requests for new areas", async () => {
     render(<ArchiveMap {...props} />);
     await waitFor(() => expect(screen.queryByTestId("map-loading")).toBeNull());

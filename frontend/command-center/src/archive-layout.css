@@ -412,3 +412,10 @@
   padding: 8px 12px;
   font-size: 12px;
 }
+
+/* Initial data loading must not hide the usable basemap. */
+.archive-map-stage .map-loading-overlay {
+  background: transparent;
+  opacity: 1;
+  pointer-events: none;
+}

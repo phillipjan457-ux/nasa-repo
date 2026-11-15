@@ -1,3 +1,4 @@
+import { archiveMapCache } from "@/lib/firewatch/archive-map-cache";
 import { CoordinateSearch } from "./CoordinateSearch";
 import { PagedValueTable } from "./AnalysisUI";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -34,17 +35,6 @@ export function ArchiveMap({
     leaflet = useRef<typeof import("leaflet") | null>(null),
     callback = useRef(onSelect);
   callback.current = onSelect;
-  const cachedMaps = useRef<
-    Array<{
-      scope: string;
-      zoom: number;
-      west: number;
-      east: number;
-      south: number;
-      north: number;
-      result: any;
-    }>
-  >([]);
   const [mapData, setMapData] = useState<any>(null);
   const tiles = useRef<TileLayer[]>([]);
   const countryGeometry = useRef<any>(null);
@@ -160,9 +150,10 @@ export function ArchiveMap({
     const zoom = Math.round(m.getZoom());
     const bounds = m.getBounds();
     const scope = query + "|" + view;
-    const cached = cachedMaps.current.find(
+    const cached = archiveMapCache.find(
       (entry) =>
         entry.scope === scope &&
+        entry.expiresAt > Date.now() &&
         entry.zoom === zoom &&
         entry.west <= bounds.getWest() &&
         entry.east >= bounds.getEast() &&
@@ -170,7 +161,6 @@ export function ArchiveMap({
         entry.north >= bounds.getNorth(),
     );
     setFailed(false);
-    setVisibleClusters([]);
     if (cached) {
       setMapData({ scope, result: cached.result });
       setLoading(false);
@@ -180,8 +170,8 @@ export function ArchiveMap({
     const width = bounds.getEast() - bounds.getWest();
     const height = bounds.getNorth() - bounds.getSouth();
     const area = {
-      west: Math.max(-180, bounds.getWest() - width * 0.5),
-      east: Math.min(180, bounds.getEast() + width * 0.5),
+      west: Math.min(180, Math.max(-180, bounds.getWest() - width * 0.5)),
+      east: Math.max(-180, Math.min(180, bounds.getEast() + width * 0.5)),
       south: Math.max(-90, bounds.getSouth() - height * 0.5),
       north: Math.min(90, bounds.getNorth() + height * 0.5),
     };
@@ -198,8 +188,14 @@ export function ArchiveMap({
       })
       .then((result) => {
         if (abort.signal.aborted) return;
-        cachedMaps.current.unshift({ scope, zoom, ...area, result });
-        cachedMaps.current.length = Math.min(cachedMaps.current.length, 8);
+        archiveMapCache.unshift({
+          scope,
+          zoom,
+          ...area,
+          result,
+          expiresAt: Date.now() + 5 * 60_000,
+        });
+        archiveMapCache.length = Math.min(archiveMapCache.length, 8);
         setMapData({ scope, result });
         setLoading(false);
       })
@@ -207,7 +203,6 @@ export function ArchiveMap({
         if (!abort.signal.aborted && e.name !== "AbortError") {
           setLoading(false);
           setFailed(true);
-          g.clearLayers();
           setStatus(e.message);
         }
       });
@@ -221,6 +216,7 @@ export function ArchiveMap({
     if (mapData.scope !== query + "|" + view) {
       g.clearLayers();
       hoverArea.current?.clearLayers();
+      setVisibleClusters([]);
       return;
     }
     const result = mapData.result;

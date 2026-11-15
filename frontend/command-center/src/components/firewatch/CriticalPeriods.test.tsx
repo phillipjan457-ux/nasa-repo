@@ -76,7 +76,7 @@ it("aborts outdated scope requests and shows no invented baseline for empty data
   expect(signals[0]!.aborted).toBe(true);
   expect(screen.queryByText("Typical peak: September.")).toBeNull();
 });
-it("offers a retry when reference loading fails", async () => {
+it("shows an error without a redundant retry and reloads when scope changes", async () => {
   vi.stubGlobal(
     "fetch",
     vi
@@ -84,7 +84,9 @@ it("offers a retry when reference loading fails", async () => {
       .mockRejectedValueOnce(Error("offline"))
       .mockResolvedValue({ ok: true, json: async () => result }),
   );
-  render(<CriticalPeriods {...props} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Retry seasonal summary" }));
+  const { rerender } = render(<CriticalPeriods {...props} />);
+  await screen.findByRole("alert");
+  expect(screen.queryByRole("button", { name: "Retry seasonal summary" })).toBeNull();
+  rerender(<CriticalPeriods {...props} region="Bali" />);
   await screen.findByText("Typical peak: September.");
 });

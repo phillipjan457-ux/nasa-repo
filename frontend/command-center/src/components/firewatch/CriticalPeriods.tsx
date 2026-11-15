@@ -46,14 +46,12 @@ export function CriticalPeriods({
   if (daynight) query.set("daynight", daynight);
   const key = query.toString();
   const [state, setState] = useState<{ key: string; data?: Season; error?: string } | null>(null);
-  const [retry, setRetry] = useState(0);
   useEffect(() => {
     const abort = new AbortController();
     setState(null);
     fetch(API + "/api/archive/critical-periods?" + key, { signal: abort.signal })
       .then(async (response) => {
-        if (!response.ok)
-          throw Error("Seasonal summary unavailable. Start the updated archive API.");
+        if (!response.ok) throw Error("Seasonal summary is unavailable.");
         return response.json();
       })
       .then((data) => {
@@ -63,7 +61,7 @@ export function CriticalPeriods({
         if (!abort.signal.aborted) setState({ key, error: String(error.message ?? error) });
       });
     return () => abort.abort();
-  }, [key, retry]);
+  }, [key]);
   const result = state?.key === key ? state : null;
   const data = result?.data;
   const names = (values: number[]) => values.map((month) => months[month - 1]).join(" / ");
@@ -89,14 +87,7 @@ export function CriticalPeriods({
           Loading seasonal reference.
         </div>
       )}
-      {result?.error && (
-        <div role="alert">
-          {result.error}{" "}
-          <button className="archive-button" onClick={() => setRetry((v) => v + 1)}>
-            Retry seasonal summary
-          </button>
-        </div>
-      )}
+      {result?.error && <div role="alert">{result.error}</div>}
       {data && !data.available && (
         <p role="status">
           No retained observations for this reference scope. Burning activity and observation
@@ -133,8 +124,8 @@ export function CriticalPeriods({
                   }}
                 />
                 <Bar
-              name="Four-year median activity units"
-              maxBarSize={48}
+                  name="Four-year median activity units"
+                  maxBarSize={48}
                   dataKey="median"
                   fill="var(--primary)"
                   isAnimationActive={false}

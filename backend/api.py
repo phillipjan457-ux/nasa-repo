@@ -154,12 +154,32 @@ def boundaries():return FileResponse(ROOT/'boundaries/indonesia-adm1.geojson',me
 @app.get('/api/archive/boundary-source')
 def boundary_source():return json.loads((ROOT/'boundaries/source.json').read_text())
 
+def archive_version():
+    path = Path(os.getenv('FIREWATCH_ARCHIVE_DB', str(DB))).resolve()
+    if not path.exists():
+        raise HTTPException(503, 'Import the archive before starting analysis.')
+    stat = path.stat()
+    return str(path), stat.st_mtime_ns, stat.st_size
+
+
+@lru_cache(maxsize=4)
+def anomaly_rows(version, detection_type):
+    with database() as connection:
+        condition = " WHERE type=0" if detection_type == 'vegetation' else ""
+        return connection.execute("SELECT year,month,region,SUM(CASE WHEN sensor='MODIS' OR group_id IS NULL THEN 1 ELSE 0 END) n FROM observations" + condition + " GROUP BY year,month,region").fetchall()
+
+
+@lru_cache(maxsize=64)
+def map_selection_total(version, where, params):
+    with database() as connection:
+        return connection.execute(f'SELECT COUNT(*) FROM observations WHERE {where}', params).fetchone()[0]
+
+
 @app.get('/api/archive/anomalies')
 @lru_cache(maxsize=8)
 def anomalies(year:int=Query(2025,ge=2022,le=2025),detection_type:Literal['vegetation','all']='all'):
     with database() as c:
-        condition=" WHERE type=0" if detection_type=='vegetation' else ""
-        rows=c.execute("SELECT year,month,region,SUM(CASE WHEN sensor='MODIS' OR group_id IS NULL THEN 1 ELSE 0 END) n FROM observations"+condition+" GROUP BY year,month,region").fetchall()
+        rows=anomaly_rows(archive_version(), detection_type)
         grid={(r['year'],r['month'],r['region']):r['n'] for r in rows}
         result=[]
         for r in rows:
@@ -246,6 +266,13 @@ def map_data(year:int|None=Query(None,ge=2022,le=2025),month:int|None=Query(None
              west:float=Query(-180,ge=-180,le=180),east:float=Query(180,ge=-180,le=180),
              south:float=Query(-90,ge=-90,le=90),north:float=Query(90,ge=-90,le=90),detection_type:Literal['vegetation','all']='all'):
     if west>east or south>north:raise HTTPException(422,'Invalid viewport bounds')
+    return cached_map_data(archive_version(), year, month, region, daynight, start_date,
+                           end_date, view, zoom, west, east, south, north, detection_type)
+
+
+@lru_cache(maxsize=16)
+def cached_map_data(version, year, month, region, daynight, start_date, end_date,
+                    view, zoom, west, east, south, north, detection_type):
     where,params=selection(year,month,region,daynight,start_date,end_date,detection_type)
     if view=='harmonized':where+=" AND (sensor='MODIS' OR group_id IS NULL)"
     else:where+=' AND sensor=?';params.append(view.upper())
@@ -253,7 +280,7 @@ def map_data(year:int|None=Query(None,ge=2022,le=2025),month:int|None=Query(None
     flags={(y,r['month'],r['region']) for y in range(2022,2026) for r in anomalies(y,detection_type)['data']}
     with database() as c:
         c.create_function('anomaly_flag',3,lambda y,m,r:int((y,m,r) in flags))
-        total=c.execute(f'SELECT COUNT(*) FROM observations WHERE {where}',params).fetchone()[0]
+        total=map_selection_total(version, where, tuple(params))
         where+=' AND lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?';params=params+[west,east,south,north]
         sql=f"""SELECT CAST((lon+180)/? AS INTEGER) gx,CAST((lat+90)/? AS INTEGER) gy,
           AVG(lat) lat,AVG(lon) lon,COUNT(*) count,MIN(id) id,
