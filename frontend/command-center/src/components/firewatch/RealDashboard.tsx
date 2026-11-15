@@ -1,3 +1,4 @@
+import { loadDefaultSnapshot } from "@/lib/firewatch/default-map-snapshot";
 import { ArchiveFilters, type ArchiveScope } from "./ArchiveFilters";
 import {
   PanelLeftClose,
@@ -18,7 +19,9 @@ import {
 } from "lucide-react";
 import { describeScope, pageGuides, Notice, ReadingGuide } from "./AnalysisUI";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-const CriticalPeriods = lazy(() => import("./CriticalPeriods").then(m => ({default: m.CriticalPeriods})));
+const CriticalPeriods = lazy(() =>
+  import("./CriticalPeriods").then((m) => ({ default: m.CriticalPeriods })),
+);
 const ArchiveMap = lazy(() => import("./ArchiveMap").then((m) => ({ default: m.ArchiveMap })));
 const ArchiveHeatmap = lazy(() =>
   import("./ArchiveHeatmap").then((m) => ({ default: m.ArchiveHeatmap })),
@@ -84,6 +87,7 @@ function ArchiveDashboard({ lang, setLang }: { lang: Lang; setLang: (l: Lang) =>
   const selectionRequest = useRef(0);
   const [historyRegion, setHistoryRegion] = useState("");
   const loadedQuery = useRef<string | null>(null);
+  const [summaryPreparedAt, setSummaryPreparedAt] = useState<string | null>(null);
   const page = useLocation({ select: (location) => location.pathname.split("/")[1] || "map" });
   const navigate = useNavigate();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -217,16 +221,33 @@ function ArchiveDashboard({ lang, setLang }: { lang: Lang; setLang: (l: Lang) =>
     }
     setData(null);
     loadedQuery.current = null;
+    setSummaryPreparedAt(null);
+    let liveSucceeded = false;
+    let hasSnapshot = false;
+    loadDefaultSnapshot(q.toString())
+      .then((snapshot) => {
+        if (abort.signal.aborted || liveSucceeded || !snapshot) return;
+        hasSnapshot = true;
+        setData(snapshot.dashboard);
+        setSummaryPreparedAt(snapshot.generated_at);
+        setLoading(false);
+        setError("");
+      })
+      .catch(() => {
+        /* The API request still handles other scopes and errors. */
+      });
     request("/api/archive/dashboard?" + q, abort.signal)
       .then((d) => {
         if (abort.signal.aborted) return;
+        liveSucceeded = true;
+        setSummaryPreparedAt(null);
         loadedQuery.current = q.toString();
         setData(d);
         setLoading(false);
       })
       .catch((e) => {
         if (!abort.signal.aborted && e.name !== "AbortError") {
-          setError(e.message);
+          if (!hasSnapshot) setError(e.message);
           setLoading(false);
         }
       });
@@ -497,6 +518,12 @@ function ArchiveDashboard({ lang, setLang }: { lang: Lang; setLang: (l: Lang) =>
           </form>
         )}
 
+        {summaryPreparedAt && (
+          <p className="chart-caption" role="status">
+            Summary from saved archive data � prepared{" "}
+            {new Date(summaryPreparedAt).toLocaleString()}.
+          </p>
+        )}
         {error && (
           <div role="alert" className="rounded border border-destructive p-4 text-destructive">
             {error}
@@ -811,8 +838,13 @@ function ArchiveDashboard({ lang, setLang }: { lang: Lang; setLang: (l: Lang) =>
                       ))}
                   </div>
                 </section>
-              <CriticalPeriods region={region} daynight={daynight} detectionType={detectionType} technical={technical} />
-              <ActivityOverview
+                <CriticalPeriods
+                  region={region}
+                  daynight={daynight}
+                  detectionType={detectionType}
+                  technical={technical}
+                />
+                <ActivityOverview
                   monthly={monthly}
                   technical={technical}
                   anomalies={

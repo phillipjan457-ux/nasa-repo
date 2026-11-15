@@ -1,3 +1,5 @@
+vi.mock("@/lib/firewatch/default-map-snapshot", () => ({ loadDefaultSnapshot: vi.fn() }));
+import { loadDefaultSnapshot } from "@/lib/firewatch/default-map-snapshot";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup, within } from "@testing-library/react";
 import { RealDashboard } from "./RealDashboard";
@@ -58,6 +60,7 @@ const summary = {
   activity: 22,
 };
 beforeEach(() => {
+  vi.mocked(loadDefaultSnapshot).mockResolvedValue(null);
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => ({
@@ -65,7 +68,15 @@ beforeEach(() => {
       json: async () => {
         if (url.includes("/sensitivity") || url.includes("/candidates"))
           return { data: [], total: 0 };
-        if (url.includes("/critical-periods")) return { available: false, months: [], years: [], reference_years: [2022,2023,2024,2025], typical_peak_months: [], comparable_months: 0 };
+        if (url.includes("/critical-periods"))
+          return {
+            available: false,
+            months: [],
+            years: [],
+            reference_years: [2022, 2023, 2024, 2025],
+            typical_peak_months: [],
+            comparable_months: 0,
+          };
         if (url.includes("/meta"))
           return { records: 617112, regions: ["Bali"], processed_at: "2026-11-14", config: {} };
         if (url.includes("/history"))
@@ -453,4 +464,32 @@ describe("Real archive dashboard", () => {
     fireEvent.click(screen.getByRole("link", { name: "Bantuan" }));
     expect(await screen.findByRole("heading", { name: "Bantuan & membaca peta" })).toBeTruthy();
   });
+});
+
+it("shows the saved summary while the default dashboard API request is pending", async () => {
+  vi.mocked(loadDefaultSnapshot).mockResolvedValue({
+    schema_version: 1,
+    version: "synthetic-version",
+    generated_at: "2026-01-01T00:00:00Z",
+    archive_processed_at: null,
+    maps: {},
+    dashboard: { summary, monthly: [], daily: [], observations: [], scope: {} },
+  });
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  let finish!: (response: Response) => void;
+  vi.mocked(fetch).mockImplementation((...args) => {
+    if (String(args[0]).includes("/dashboard?")) {
+      return new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+    }
+    return originalFetch(...args);
+  });
+  await renderDashboard();
+  await screen.findByText(/Summary from saved archive data/);
+  finish({
+    ok: true,
+    json: async () => ({ summary, monthly: [], daily: [], observations: [], scope: {} }),
+  } as Response);
+  await waitFor(() => expect(screen.queryByText(/Summary from saved archive data/)).toBeNull());
 });

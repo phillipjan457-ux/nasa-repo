@@ -1,3 +1,4 @@
+import { loadDefaultSnapshot } from "@/lib/firewatch/default-map-snapshot";
 import { archiveMapCache } from "@/lib/firewatch/archive-map-cache";
 import { CoordinateSearch } from "./CoordinateSearch";
 import { PagedValueTable } from "./AnalysisUI";
@@ -36,6 +37,7 @@ export function ArchiveMap({
     callback = useRef(onSelect);
   callback.current = onSelect;
   const [mapData, setMapData] = useState<any>(null);
+  const [refreshUnavailable, setRefreshUnavailable] = useState(false);
   const tiles = useRef<TileLayer[]>([]);
   const countryGeometry = useRef<any>(null);
   const countryRenderer = useRef<Renderer | null>(null);
@@ -161,6 +163,7 @@ export function ArchiveMap({
         entry.north >= bounds.getNorth(),
     );
     setFailed(false);
+    setRefreshUnavailable(false);
     if (cached) {
       setMapData({ scope, result: cached.result });
       setLoading(false);
@@ -181,6 +184,27 @@ export function ArchiveMap({
     for (const [key, value] of Object.entries(area)) q.set(key, String(value));
     setLoading(true);
     setStatus("Loading visible observations.");
+    let liveSucceeded = false;
+    let liveFailed = false;
+    let hasSnapshot = false;
+    loadDefaultSnapshot(query)
+      .then((snapshot) => {
+        const result = snapshot?.maps[`${view}:${zoom}`];
+        if (abort.signal.aborted || liveSucceeded || !result) return;
+        hasSnapshot = true;
+        setMapData({
+          scope,
+          result,
+          preparedAt: snapshot!.generated_at,
+          version: snapshot!.version,
+        });
+        setFailed(false);
+        setRefreshUnavailable(liveFailed);
+        if (liveFailed) setLoading(false);
+      })
+      .catch(() => {
+        /* The normal viewport request remains the fallback. */
+      });
     fetch(API + "/api/archive/map?" + q, { signal: abort.signal })
       .then(async (r) => {
         if (!r.ok) throw Error("Map data unavailable");
@@ -188,6 +212,8 @@ export function ArchiveMap({
       })
       .then((result) => {
         if (abort.signal.aborted) return;
+        liveSucceeded = true;
+        setRefreshUnavailable(false);
         archiveMapCache.unshift({
           scope,
           zoom,
@@ -202,8 +228,13 @@ export function ArchiveMap({
       .catch((e) => {
         if (!abort.signal.aborted && e.name !== "AbortError") {
           setLoading(false);
-          setFailed(true);
-          setStatus(e.message);
+          liveFailed = true;
+          if (hasSnapshot) {
+            setRefreshUnavailable(true);
+          } else {
+            setFailed(true);
+            setStatus(e.message);
+          }
         }
       });
     return () => abort.abort();
@@ -389,7 +420,7 @@ export function ArchiveMap({
           className="fw-map h-full w-full"
           role="region"
           aria-label="Indonesia map of selected archive records in the visible area"
-          aria-busy={loading}
+          aria-busy={loading && !mapData?.preparedAt}
         />
         <button
           ref={fullscreenButton}
@@ -421,6 +452,16 @@ export function ArchiveMap({
           </div>
         )}
       </div>
+      {mapData?.preparedAt && mapData.scope === query + "|" + view && (
+        <p className="chart-caption" role="status" data-testid="map-snapshot-notice">
+          Saved archive data � prepared {new Date(mapData.preparedAt).toLocaleString()}.
+          {loading
+            ? " Checking for updates."
+            : refreshUnavailable
+              ? " Update unavailable; saved data remains visible."
+              : ""}
+        </p>
+      )}
       {fullscreenError && <div role="alert">{fullscreenError}</div>}
       {boundaryError && (
         <div role="alert">

@@ -1,3 +1,5 @@
+vi.mock("@/lib/firewatch/default-map-snapshot", () => ({ loadDefaultSnapshot: vi.fn() }));
+import { loadDefaultSnapshot } from "@/lib/firewatch/default-map-snapshot";
 import { archiveMapCache } from "@/lib/firewatch/archive-map-cache";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, waitFor, screen, fireEvent } from "@testing-library/react";
@@ -82,6 +84,7 @@ function mapCalls() {
 }
 
 beforeEach(() => {
+  vi.mocked(loadDefaultSnapshot).mockResolvedValue(null);
   archiveMapCache.length = 0;
   mocks.zoom = 5;
   mocks.pan = 0;
@@ -432,4 +435,65 @@ describe("archive map background loading", () => {
     await screen.findByRole("button", { name: "Retry map" });
     expect(screen.getByRole("button", { name: "Dismiss map status" })).toBeTruthy();
   });
+});
+
+it("renders saved map observations before the API returns and keeps them if refresh fails", async () => {
+  const point = {
+    lat: -2,
+    lon: 110,
+    id: "saved",
+    count: 1,
+    modis: 1,
+    viirs: 0,
+    matched: 0,
+    possible: 0,
+    modis_only: 1,
+    viirs_only: 0,
+    anomaly_count: 0,
+  };
+  vi.mocked(loadDefaultSnapshot).mockResolvedValue({
+    schema_version: 1,
+    version: "test-version",
+    generated_at: "2026-01-01T00:00:00Z",
+    archive_processed_at: null,
+    maps: { "harmonized:5": { ...result, total: 1, clusters: [point] } },
+    dashboard: {},
+  });
+  let finish!: (response: Response) => void;
+  vi.mocked(fetch).mockImplementation(async (url) => {
+    if (String(url).includes("/map?"))
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    return { ok: true, json: async () => result } as Response;
+  });
+  render(<ArchiveMap {...props} query="year=2022&month=1&detection_type=vegetation" />);
+  await screen.findByTestId("map-snapshot-notice");
+  expect(mocks.divIcon).toHaveBeenCalled();
+  expect(screen.getByTestId("map-loading")).toHaveClass("map-background-loading");
+  await act(async () => {
+    finish({ ok: false } as Response);
+  });
+  await screen.findByText(/Update unavailable; saved data remains visible/);
+  expect(screen.queryByRole("button", { name: "Retry map" })).toBeNull();
+  expect(screen.queryByTestId("map-loading")).toBeNull();
+});
+it("does not let a late snapshot overwrite a completed live map response", async () => {
+  let finish!: (snapshot: any) => void;
+  vi.mocked(loadDefaultSnapshot).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  render(<ArchiveMap {...props} />);
+  await waitFor(() => expect(screen.queryByTestId("map-loading")).toBeNull());
+  await act(async () => {
+    finish({
+      version: "old",
+      generated_at: "2026-01-01T00:00:00Z",
+      maps: { "harmonized:5": result },
+    });
+  });
+  expect(screen.queryByTestId("map-snapshot-notice")).toBeNull();
 });
