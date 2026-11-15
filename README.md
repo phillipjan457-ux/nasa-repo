@@ -92,6 +92,16 @@ Expected columns: `latitude, longitude, acq_date`, plus `instrument` and/or `sat
 
 All thresholds and rules are in `firewatch/config.py`.
 
+## Credits and attribution
+
+- Fire detections: NASA FIRMS MODIS and VIIRS archives, where used.
+- Basemap: Esri World Gray Canvas; map attribution includes Esri, HERE, Garmin,
+  and OpenStreetMap contributors. Keep the on-map attribution visible.
+- Mapping library: [Leaflet](https://leafletjs.com/).
+
+Credit data providers and software separately, and add attribution for any
+additional datasets used by a workflow.
+
 ## Known limitations and TODO
 
 - Preset AOIs are **approximate boxes**. Replace with official boundaries (check license) in `firewatch/config.py`.
